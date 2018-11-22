@@ -121,7 +121,14 @@ void loop() {
     } else if (motor[i].pos < motor[i].target-EPSILON && motor[i].dir != FORWARDS) {
       forwards(i);
     }
-    // TODO: jog it for a few microseconds based on the average time between ticks in order to take up the last EPSILON number of ticks to get bang on the target?
+    /* TODO: jog it for a few microseconds based on the average time between ticks in order to take up the
+     * last EPSILON number of ticks to get bang on the target? I tried to do this but found that the
+     * jerking back and forth has a high risk of overwhelming the power supply, causing the arduino
+     * to reset. It probably wants either more capacitors, or we could use PWM instead of "manually"
+     * switching the motor on and off - only 3 of the motor drive pins support PWM but that might be OK! E.g.
+     * if motor 1 only supports PWM in the reverse direction, we can just overshoot the target when driving
+     * forwards, and then PWM backwards to reach the target
+     */
   }
 }
 
