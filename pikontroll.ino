@@ -1,6 +1,16 @@
 /* pikontroll - Arduino code for controlling my PiKon telescope
- *  
- *  jes 2018
+ *
+ * it assumes there is one servo and 2 motors, the motors are driven by an L298N, and each motor has a quadrature encoder
+ *
+ * configure pin assignments in setup() on the lines marked "// pin"
+ * if your motors run backwards, either swap the encoder pins or the motor control pins, but
+ * note that the Uno can only do interrupts on pins 2 and 3, so you need one each of those pins
+ * for each of the quadrature encoders
+ *
+ * commands are sent to this program over the Serial port, at 9600 baud, see the text in
+ * serial_command() to learn how to use it
+ *
+ * jes 2018
  */
 
 #include <Servo.h>
@@ -11,7 +21,7 @@
 
 #define BUFSZ 128
 
-// aim to be within EPSILON steps of the target
+// aim to be within EPSILON steps of the target point
 #define EPSILON 5
 
 typedef struct Motor {
@@ -19,7 +29,7 @@ typedef struct Motor {
   long target;
   bool havetarget;
   int dir;
-  long last;
+  unsigned long last;
   int enc1, enc2; // encoder pins
   int forwardpin, reversepin; // motor control pins
 } Motor;
@@ -36,18 +46,18 @@ void setup() {
   Serial.println("Setup...");
 
   // initialise servo
-  servo.attach(8);
+  servo.attach(8); // pin
   servo.writeMicroseconds(servous);
 
   // setup motor pins (note that the "enc1" pins must support interrupts)
-  motor[0].enc1 = 2;
-  motor[0].enc2 = 4;
-  motor[0].forwardpin = 10;
-  motor[0].reversepin = 9;
-  motor[1].enc1 = 3;
-  motor[1].enc2 = 5;
-  motor[1].forwardpin = 11;
-  motor[1].reversepin = 12;
+  motor[0].enc1 = 2; // pin
+  motor[0].enc2 = 4; // pin
+  motor[0].forwardpin = 10; // pin
+  motor[0].reversepin = 9; // pin
+  motor[1].enc1 = 3; // pin
+  motor[1].enc2 = 5; // pin
+  motor[1].forwardpin = 11; // pin
+  motor[1].reversepin = 12; // pin
 
   // initialise encoders
   pinMode(motor[0].enc1, INPUT);
