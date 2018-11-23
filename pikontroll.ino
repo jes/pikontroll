@@ -142,7 +142,7 @@ void handle_serial() {
       buf[p++] = 0;
       serial_command(buf);
       p = 0;
-    } else if (c != '\r') {
+    } else {
       buf[p++] = c;
     }
   }
