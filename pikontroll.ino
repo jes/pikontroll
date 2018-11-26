@@ -3,7 +3,6 @@
  * it assumes there is one servo and 2 motors, the motors are driven by an L298N, and each motor has a quadrature encoder
  *
  * configure pin assignments in setup() on the lines marked "// pin"
- * if your motors run backwards, either swap the encoder pins or the motor control pins, but
  * note that the Uno can only do interrupts on pins 2 and 3, so you need one each of those pins
  * for each of the quadrature encoders
  *
@@ -28,6 +27,7 @@ typedef struct Motor {
   long pos;
   long target;
   bool havetarget;
+  bool ok;
   int dir;
   unsigned long last;
   int enc1, enc2; // encoder pins
@@ -75,6 +75,12 @@ void setup() {
 
   // ensure both motors are stopped
   stopmotor(0); stopmotor(1);
+
+  // test both motors
+  testmotor(0); testmotor(1);
+
+  // and ensure they're stopped again
+  stopmotor(0); stopmotor(1);
   
   Serial.println("Ready.");
 }
@@ -104,6 +110,78 @@ void motordir(int m, int d) {
   motor[m].dir = d;
   digitalWrite(motor[m].forwardpin, d == 1);
   digitalWrite(motor[m].reversepin, d == -1);
+}
+
+// run motor m for 100ms both forwards and backwards, to see if it is working
+void testmotor(int m) {
+  unsigned long endt;
+  long pos;
+  bool ok = true;
+
+  // forwards
+  endt = millis() + 100;
+  pos = motor[m].pos;
+  forwards(m);
+  while (millis() < endt) { }
+  stopmotor(m);
+  if (motor[m].pos == pos) {
+    Serial.print("Motor "); Serial.print(m); Serial.println(" not running on forwards pin");
+    ok = false;
+  } else {
+    // stop for 100ms to let it settle
+    endt = millis() + 100;
+    while (millis() < endt) { }
+  }
+
+  // if motor ran backwards instead of forwards, swap pin assignments and check again
+  if (motor[m].pos < pos) {
+    Serial.print("Motor "); Serial.print(m); Serial.println(" ran in reverse instead of forwards; swapping pin assignment and trying again");
+
+    int pin = motor[m].forwardpin;
+    motor[m].forwardpin = motor[m].reversepin;
+    motor[m].reversepin = pin;
+
+    endt = millis() + 100;
+    pos = motor[m].pos;
+    forwards(m);
+    while (millis() < endt) { }
+    stopmotor(m);
+
+    if (motor[m].pos == pos) {
+      Serial.print("Motor "); Serial.print(m); Serial.println(" not running on forwards pin after swapping pin assignment");
+      ok = false;
+    } else {
+      // stop for 100ms to let it settle
+      endt = millis() + 100;
+      while (millis() < endt) { }
+    }
+
+    // still running backwards?!
+    if (motor[m].pos < pos) {
+      Serial.print("Motor "); Serial.print(m); Serial.println(" still running in reverse after swapping pin assignment");
+      ok = false;
+    }
+  }
+
+  // backwards
+  endt = millis() + 100;
+  pos = motor[m].pos;
+  backwards(m);
+  while (millis() < endt) { }
+  stopmotor(m);
+  if (motor[m].pos == pos) {
+    Serial.print("Motor "); Serial.print(m); Serial.println(" not running on reverse pin");
+    ok = false;
+  } else if (motor[m].pos > pos) {
+    Serial.print("Motor "); Serial.print(m); Serial.println(" ran forwards on reverse pin");
+    ok = false;
+  }
+
+  if (ok) {
+    Serial.print("Motor "); Serial.print(m); Serial.println(" ok");
+  }
+
+  motor[m].ok = ok;
 }
 
 void loop() {
@@ -159,7 +237,8 @@ void serial_command(char *buf) {
       "   target N P - make motor N (0,1) move to position P (-2bn .. +2bn)\n"
       "   read N     - read state of motor N\n"
       "   servo N    - set motor microseconds to N (servomin .. servomax)\n"
-      "   readservo  - read servo microseconds and bounds\n");
+      "   readservo  - read servo microseconds and bounds\n"
+      "   test N     - re-test motor N (0,1)\n");
       
   } else if (strcmp(params[0], "drive") == 0) {
     if (!params[1] || !params[2]) {
@@ -215,6 +294,7 @@ void serial_command(char *buf) {
     Serial.print(" last="); Serial.print(millis() - motor[num].last);
     Serial.print(" target="); Serial.print(motor[num].target);
     Serial.print(" havetarget="); Serial.print(motor[num].havetarget);
+    Serial.print(" ok="); Serial.print(motor[num].ok);
     Serial.print("\n");
     
   } else if (strcmp(params[0], "servo") == 0) {
@@ -238,6 +318,19 @@ void serial_command(char *buf) {
     Serial.print(" max="); Serial.print(servomax);
     Serial.print("\n");
     
+  } else if (strcmp(params[0], "test") == 0) {
+    if (!params[1]) {
+      Serial.println("usage: test N");
+      return;
+    }
+
+    int num = atoi(params[1]);
+    if (num < 0 || num > 1) {
+      Serial.println("error: motor must be 0 or 1");
+      return;
+    }
+
+    testmotor(num);
   }
 }
 
