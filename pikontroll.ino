@@ -111,26 +111,31 @@ void motordir(int m, int d) {
   digitalWrite(motor[m].forwardpin, d == 1);
   digitalWrite(motor[m].reversepin, d == -1);
 }
+void motordir_timed(int m, int d, int ms) {
+  unsigned long endt = millis() + ms;
+  motor[m].dir = d;
+  digitalWrite(motor[m].forwardpin, d == 1);
+  digitalWrite(motor[m].reversepin, d == -1);
+  while (millis() < endt) {}
+  digitalWrite(motor[m].forwardpin, 0);
+  digitalWrite(motor[m].reversepin, 0);
+}
 
 // run motor m for 100ms both forwards and backwards, to see if it is working
 void testmotor(int m) {
-  unsigned long endt;
   long pos;
   bool ok = true;
 
   // forwards
-  endt = millis() + 100;
   pos = motor[m].pos;
-  forwards(m);
-  while (millis() < endt) { }
-  stopmotor(m);
+  motordir_timed(m, FORWARDS, 100);
+
   if (motor[m].pos == pos) {
     Serial.print("Motor "); Serial.print(m); Serial.println(" not running on forwards pin");
     ok = false;
   } else {
     // stop for 100ms to let it settle
-    endt = millis() + 100;
-    while (millis() < endt) { }
+    motordir_timed(m, STOPPED, 100);
   }
 
   // if motor ran backwards instead of forwards, swap pin assignments and check again
@@ -141,19 +146,15 @@ void testmotor(int m) {
     motor[m].forwardpin = motor[m].reversepin;
     motor[m].reversepin = pin;
 
-    endt = millis() + 100;
     pos = motor[m].pos;
-    forwards(m);
-    while (millis() < endt) { }
-    stopmotor(m);
+    motordir_timed(m, FORWARDS, 100);
 
     if (motor[m].pos == pos) {
       Serial.print("Motor "); Serial.print(m); Serial.println(" not running on forwards pin after swapping pin assignment");
       ok = false;
     } else {
       // stop for 100ms to let it settle
-      endt = millis() + 100;
-      while (millis() < endt) { }
+      motordir_timed(m, STOPPED, 100);
     }
 
     // still running backwards?!
@@ -164,11 +165,9 @@ void testmotor(int m) {
   }
 
   // backwards
-  endt = millis() + 100;
   pos = motor[m].pos;
-  backwards(m);
-  while (millis() < endt) { }
-  stopmotor(m);
+  motordir_timed(m, BACKWARDS, 100);
+
   if (motor[m].pos == pos) {
     Serial.print("Motor "); Serial.print(m); Serial.println(" not running on reverse pin");
     ok = false;
