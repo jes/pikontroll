@@ -76,9 +76,6 @@ void setup() {
   // ensure both motors are stopped
   stopmotor(0); stopmotor(1);
 
-  // test both motors
-  testmotor(0); testmotor(1);
-
   // and ensure they're stopped again
   stopmotor(0); stopmotor(1);
   
@@ -107,6 +104,10 @@ void backwards(int m) {
   motordir(m, BACKWARDS);
 }
 void motordir(int m, int d) {
+  if (d != 0 && motor[m].dir == -d) {
+    // stop the motor for 100ms before reversing direction, to avoid voltage spikes in power supply
+    motordir_timed(m, 0, 100);
+  }
   motor[m].dir = d;
   digitalWrite(motor[m].forwardpin, d == 1);
   digitalWrite(motor[m].reversepin, d == -1);
@@ -119,6 +120,7 @@ void motordir_timed(int m, int d, int ms) {
   while (millis() < endt) {}
   digitalWrite(motor[m].forwardpin, 0);
   digitalWrite(motor[m].reversepin, 0);
+  motor[m].dir = STOPPED;
 }
 
 // run motor m for 100ms both forwards and backwards, to see if it is working
