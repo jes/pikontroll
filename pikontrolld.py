@@ -6,12 +6,29 @@
 import math
 import logging
 import asyncore, socket
+import serial
 from time import sleep, time
 from string import replace
 from bitstring import BitArray, BitStream, ConstBitStream
 import coords
+import altazimuth
  
 logging.basicConfig(level=logging.DEBUG, format="%(filename)s: %(funcName)s - %(levelname)s: %(message)s")
+
+class PikonMotor:
+    # ser is the serial port to write to, n is the motor index
+    def __init__(self, ser, n, stepsper360):
+        self.ser = ser
+        self.n = n
+        self.stepsper360 = stepsper360
+        self.trim = 0
+
+    def target(self, degrees):
+        logging.debug("Motor target %f\n" % (degrees))
+        steps = float(degrees) / 360.0 * float(self.stepsper360) + self.trim
+        logging.debug(">>> target %d %d\n" % (self.n, steps))
+        self.ser.write("target %d %d\n" % (self.n, steps))
+        
  
 ## \brief Implementation of the server side connection for 'Stellarium Telescope Protocol'
 #
@@ -21,9 +38,10 @@ class Telescope_Channel(asyncore.dispatcher):
     ## Class constructor
     #
     # \param conn_sock Connection socket
-    def __init__(self, conn_sock):
+    def __init__(self, conn_sock, server):
         self.is_writable = False
         self.buffer = ''
+        self.server = server
         asyncore.dispatcher.__init__(self, conn_sock)
  
     ## Indicates the socket is readable
@@ -70,9 +88,16 @@ class Telescope_Channel(asyncore.dispatcher):
             dec = data.read('hex:32')
             data.bitpos = ant_pos
             dec_int = data.read('intle:32')
+
  
             logging.debug("Size: %d, Type: %d, Time: %d, RA: %d (%s), DEC: %d (%s)" % (msize, mtype, mtime, ra_uint, ra, dec_int, dec))
             (sra, sdec, stime) = coords.eCoords2str(float("%f" % ra_uint), float("%f" % dec_int), float("%f" %  mtime))
+
+            dec_degrees = dec_int * float(90.0)/float(1073741824)
+
+            (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), -2.50029, 51.45528, coords.rad_2_hour(coords.hourStr_2_rad(sra)), dec_degrees)
+            logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
+            self.server.target(altdegrees, azdegrees)
  
             #Sends back the coordinates to Stellarium
             self.act_pos(coords.hourStr_2_rad(sra), coords.degStr_2_rad(sdec))
@@ -125,6 +150,9 @@ class Telescope_Server(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self, None)
         self.tel = None
         self.port = port
+        self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=1)
+        self.azMotor = PikonMotor(self.ser, 0, 294912)
+        self.altMotor = PikonMotor(self.ser, 1, 314572.8)
  
     ## Starts thread
     #
@@ -137,6 +165,11 @@ class Telescope_Server(asyncore.dispatcher):
         self.listen(1)
         self.connected = False
         asyncore.loop()
+
+    def target(self, altdegrees, azdegrees):
+        logging.debug("Target %f, %f" % (altdegrees, azdegrees))
+        self.altMotor.target(altdegrees)
+        self.azMotor.target(azdegrees)
  
     ## Handles incomming connection
     #
@@ -145,7 +178,7 @@ class Telescope_Server(asyncore.dispatcher):
         self.conn, self.addr = self.accept()
         logging.debug('%s Connected', self.addr)
         self.connected = True
-        self.tel = Telescope_Channel(self.conn)
+        self.tel = Telescope_Channel(self.conn, self)
  
     ## Closes the connection
     #
