@@ -203,7 +203,10 @@ class Telescope_Server(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self, None)
         self.tel = None
         self.port = port
-        self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=10)
+        try:
+            self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=10)
+        except:
+            self.ser = serial.Serial("/dev/ttyUSB1", 9600, timeout=10)
         self.azMotor = PikonMotor(self.ser, 0, 294912)
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
  
