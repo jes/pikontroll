@@ -16,6 +16,8 @@ def CalculateLocalSiderealDegrees(longitude, utcNow):
     return math.fmod(280.461+360.98564737 * D + longitude, 360.0)
 
 # return (azimuthDegrees, altitudeDegrees)
+# http://star-www.st-and.ac.uk/~fv/webnotes/chapter7.htm
+# http://www.stargazing.net/kepler/altaz.html
 def ComputeAltAzimuth(utcNow, longitudeDegrees, latitudeDegrees, rightAscensionHours, declinationDegrees):
     localSiderealDegrees = CalculateLocalSiderealDegrees(longitudeDegrees, utcNow)
     rightAscensionDegrees = rightAscensionHours * 15.0;  # Convert hours to degrees by multiplying with 15
@@ -27,6 +29,7 @@ def ComputeAltAzimuth(utcNow, longitudeDegrees, latitudeDegrees, rightAscensionH
     latitudeRadians = 2.0 * math.pi / 360.0 * latitudeDegrees
 
     altitudeRadians = math.asin(math.sin(declinationRadians) * math.sin(latitudeRadians) + math.cos(declinationRadians) * math.cos(latitudeRadians) * math.cos(hourAngleRadians))
+
     azimuthRadians = math.acos((math.sin(declinationRadians) - math.sin(altitudeRadians) * math.sin(latitudeRadians)) / (math.cos(altitudeRadians) * math.cos(latitudeRadians)))
 
     altitudeDegrees = 360.0 / (2 * math.pi) * altitudeRadians
@@ -43,8 +46,18 @@ def ComputeRaDec(utcNow, longitudeDegrees, latitudeDegrees, azimuthDegrees, alti
     latitudeRadians = 2.0 * math.pi / 360.0 * latitudeDegrees
     altitudeRadians = 2.0 * math.pi / 360.0 * altitudeDegrees
     azimuthRadians = 2.0 * math.pi / 360.0 * azimuthDegrees
+
     declinationRadians = math.asin(math.sin(latitudeRadians) * math.sin(altitudeRadians) + math.cos(latitudeRadians) * math.cos(altitudeRadians) * math.cos(azimuthRadians))
-    hourAngleRadians = math.acos((math.sin(altitudeRadians) - math.sin(declinationRadians) * math.sin(latitudeRadians))/(math.cos(declinationRadians) * math.cos(latitudeRadians)))
+
+    # calculate the hour-angle using both cosine rule and sine rule, so that we can disambiguate
+    # (both arcsine and arccosine are ambiguous: cosine is mirrored about 180 degrees, sine is mirrored
+    # in two sections, about 90 degrees and 270 degrees)
+    hourAngleRadiansCosineRule = math.acos((math.sin(altitudeRadians) - math.sin(declinationRadians) * math.sin(latitudeRadians))/(math.cos(declinationRadians) * math.cos(latitudeRadians)))
+    hourAngleRadiansSineRule = math.asin((-math.sin(azimuthRadians) * math.cos(altitudeRadians)) / math.cos(declinationRadians))
+    hourAngleRadians = hourAngleRadiansCosineRule
+    if hourAngleRadiansSineRule < 0:
+        hourAngleRadians = 2.0 * math.pi - hourAngleRadiansCosineRule
+
     hourAngleDegrees = 360.0 / (2.0 * math.pi) * hourAngleRadians
     rightAscensionDegrees = localSiderealDegrees - hourAngleDegrees
     if rightAscensionDegrees < 0.0:
