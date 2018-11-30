@@ -61,9 +61,9 @@ class Telescope_Channel(asyncore.dispatcher):
     #
     # \param conn_sock Connection socket
     def __init__(self, conn_sock, server):
-        self.is_writable = False
-        self.buffer = ''
         self.server = server
+        self.last_update = time()
+        self.have_target = False
         asyncore.dispatcher.__init__(self, conn_sock)
  
     ## Indicates the socket is readable
@@ -76,7 +76,8 @@ class Telescope_Channel(asyncore.dispatcher):
     #
     # \return Boolean True/False
     def writable(self):
-        return self.is_writable
+        # we want to write if it's more than 0.1 second since the last update
+        return (time() - self.last_update) > 0.1
  
     ## Close connection handler
     #
@@ -117,13 +118,18 @@ class Telescope_Channel(asyncore.dispatcher):
 
             dec_degrees = dec_int * float(90.0)/float(1073741824)
 
-            (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), -2.50029, 51.45528, coords.rad_2_hour(coords.hourStr_2_rad(sra)), dec_degrees)
-            logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
-            self.server.target(altdegrees, azdegrees)
- 
-            #Sends back the coordinates to Stellarium
-            self.act_pos(coords.hourStr_2_rad(sra), coords.degStr_2_rad(sdec))
- 
+            self.target = (coords.rad_2_hour(coords.hourStr_2_rad(sra)), dec_degrees)
+            self.have_target = True
+            self.drive_to_target()
+
+    def drive_to_target(self):
+        if not self.have_target:
+            return
+        (ra, dec) = self.target
+        (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), -2.50029, 51.45528, ra, dec)
+        logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
+        self.server.target(altdegrees, azdegrees)
+
     ## Updates the field of view indicator in Stellarium
     #
     # \param ra Right ascension in signed string format
@@ -134,6 +140,18 @@ class Telescope_Channel(asyncore.dispatcher):
         times = 10 #Number of times that Stellarium expects to receive new coords //Absolutly empiric..
         for i in range(times):
             self.move(ra_p, dec_p)
+
+    # read current position from motors and send it to stellarium
+    def send_current_pos(self):
+        (altdegrees, azdegrees) = self.server.currentpos()
+        (ra_hours, dec_degrees) = altazimuth.ComputeRaDec(altazimuth.GetNow(), -2.50029, 51.45528, azdegrees, altdegrees)
+        logging.debug("Ra_hours = %f, Dec_degrees = %f" % (ra_hours, dec_degrees))
+        ra_rad = round((ra_hours * 15 * math.pi) / 180, 6)
+        dec_rad = dec_degrees * math.pi / 180
+        (ra, dec) = coords.rad_2_stellarium_protocol(ra_rad, dec_rad)
+        for i in range(10):
+            self.move(ra, dec)
+        logging.debug("Alt = %f, Az = %f\n" % (altdegrees, azdegrees))
  
     ## Sends to Stellarium equatorial coordinates
     #
@@ -150,15 +168,16 @@ class Telescope_Channel(asyncore.dispatcher):
         sdata = ConstBitStream(msize) + ConstBitStream(mtype)
         sdata += ConstBitStream(intle=localtime.intle, length=64) + ConstBitStream(uintle=ra, length=32)
         sdata += ConstBitStream(intle=dec, length=32) + ConstBitStream(intle=0, length=32)
-        self.buffer = sdata
-        self.is_writable = True
-        self.handle_write()
+        buffer = sdata
+        self.send(buffer.bytes)
  
     ## Transmission handler
     #
     def handle_write(self):
-        self.send(self.buffer.bytes)
-        self.is_writable = False
+        logging.debug("Handle write")
+        self.drive_to_target()
+        self.send_current_pos()
+        self.last_update = time()
  
 ## \brief Implementation of the server side communications for 'Stellarium Telescope Protocol'.
 #
@@ -186,7 +205,8 @@ class Telescope_Server(asyncore.dispatcher):
         self.bind(('0.0.0.0', self.port))
         self.listen(1)
         self.connected = False
-        asyncore.loop()
+        while True:
+            asyncore.loop(0.1)
 
     def target(self, altdegrees, azdegrees):
         logging.debug("Target %f, %f" % (altdegrees, azdegrees))

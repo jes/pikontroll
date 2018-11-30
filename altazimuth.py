@@ -50,5 +50,5 @@ def ComputeRaDec(utcNow, longitudeDegrees, latitudeDegrees, azimuthDegrees, alti
     if rightAscensionDegrees < 0.0:
         rightAscensionDegrees += 360.0
     rightAscensionHours = rightAscensionDegrees / 15.0
-    declinationDegrees = 360.0 / (2.0 * math.pi) * declinationRadian
+    declinationDegrees = 360.0 / (2.0 * math.pi) * declinationRadians
     return (rightAscensionHours, declinationDegrees)
