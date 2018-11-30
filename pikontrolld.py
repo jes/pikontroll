@@ -56,7 +56,13 @@ class PikonMotor:
     # (blocks on serial)
     def currentpos(self):
         (pos,_,_,_,_,_) = self.read()
-        return float(pos - self.trim) * 360.0 / float(self.stepsper360)
+        degrees = float(pos - self.trim) * 360.0 / float(self.stepsper360)
+        while degrees < 0:
+            degrees += 360
+        while degrees > 360:
+            degrees -= 360
+        logging.debug("Current degrees on motor %d is %f" % (self.n, degrees))
+        return degrees
  
 ## \brief Implementation of the server side connection for 'Stellarium Telescope Protocol'
 #
