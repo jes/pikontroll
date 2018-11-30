@@ -27,6 +27,12 @@ class PikonMotor:
     def target(self, degrees):
         logging.debug("Motor target %f\n" % (degrees))
         steps = float(degrees) / 360.0 * float(self.stepsper360) + self.trim
+        (cursteps,_,_,_,_,_) = self.read()
+        halfturn = self.stepsper360/2
+        while steps > cursteps+halfturn:
+            steps -= self.stepsper360
+        while steps < cursteps-halfturn:
+            steps += self.stepsper360
         logging.debug(">>> target %d %d\n" % (self.n, steps))
         self.ser.write("target %d %d\n" % (self.n, steps))
 
