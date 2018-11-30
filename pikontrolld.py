@@ -12,6 +12,7 @@ from string import replace
 from bitstring import BitArray, BitStream, ConstBitStream
 import coords
 import altazimuth
+import re
  
 logging.basicConfig(level=logging.DEBUG, format="%(filename)s: %(funcName)s - %(levelname)s: %(message)s")
 
@@ -28,7 +29,28 @@ class PikonMotor:
         steps = float(degrees) / 360.0 * float(self.stepsper360) + self.trim
         logging.debug(">>> target %d %d\n" % (self.n, steps))
         self.ser.write("target %d %d\n" % (self.n, steps))
-        
+
+    # return (pos, dir, last, target, havetarget, ok)
+    # where:
+    #   pos is the current step count
+    #   dir is the current motion direction
+    #   last is the number of ms since the last step
+    #   target is the current target
+    #   havetarget is 1 if the motor is aiming for the target and 0 if it's ignoring it
+    #   ok is 1 if the last "test" was a success, and 0 if not, or if there was no test
+    # blocks until a response is received over serial (or until the serial timeout is reached and then it probably fails)
+    def read(self):
+        self.ser.write("read %d\n" % (self.n))
+        resp = self.ser.readline()
+        regex = re.compile("motor \d+: pos=(-?\d+) dir=(-?\d+) last=(-?\d+) target=(-?\d+) havetarget=([01]) ok=([01])")
+        m = regex.match(resp)
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
+
+    # return current position in degrees
+    # (blocks on serial)
+    def currentpos(self):
+        (pos,_,_,_,_,_) = self.read()
+        return float(pos - self.trim) * 360.0 / float(self.stepsper360)
  
 ## \brief Implementation of the server side connection for 'Stellarium Telescope Protocol'
 #
@@ -150,7 +172,7 @@ class Telescope_Server(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self, None)
         self.tel = None
         self.port = port
-        self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=1)
+        self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=10)
         self.azMotor = PikonMotor(self.ser, 0, 294912)
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
  
@@ -171,6 +193,10 @@ class Telescope_Server(asyncore.dispatcher):
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
  
+    # return (altdegrees, azdegrees)
+    def currentpos(self):
+        return (self.altMotor.currentpos(), self.azMotor.currentpos())
+
     ## Handles incomming connection
     #
     # Stats a new thread as Telescope_Channel instance, passing it the opened socket as parameter
