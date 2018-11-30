@@ -75,9 +75,6 @@ void setup() {
 
   // ensure both motors are stopped
   stopmotor(0); stopmotor(1);
-
-  // and ensure they're stopped again
-  stopmotor(0); stopmotor(1);
   
   Serial.println("Ready.");
 }
