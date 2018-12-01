@@ -20,8 +20,10 @@
 
 #define BUFSZ 128
 
-// aim to be within EPSILON steps of the target point
-#define EPSILON 5
+// continuous drive to within EPSILON steps of the target, and then use the "us_per_step" table to look up how long to run the motors for
+#define EPSILON 40
+// don't bother trying to get closer than MIN_EPSILON steps
+#define MIN_EPSILON 4
 
 typedef struct Motor {
   long pos;
@@ -30,6 +32,7 @@ typedef struct Motor {
   bool ok;
   int dir;
   unsigned long last;
+  unsigned int us_per_step;
   int enc1, enc2; // encoder pins
   int forwardpin, reversepin; // motor control pins
 } Motor;
@@ -58,6 +61,10 @@ void setup() {
   motor[1].enc2 = 5; // pin
   motor[1].forwardpin = 11; // pin
   motor[1].reversepin = 12; // pin
+
+  // configure microsecs required for each step when moving a small number of steps
+  motor[0].us_per_step = 600;
+  motor[1].us_per_step = 600;
 
   // initialise encoders
   pinMode(motor[0].enc1, INPUT);
@@ -91,6 +98,11 @@ void statechange(int m) {
 }
 
 // functions to control motors
+void wait_for_stop(int m) {
+  motordir(m, STOPPED);
+  // wait until at least 10ms since the last step
+  while (motor[m].last > millis() - 10) { }
+}
 void stopmotor(int m) {
   motordir(m, STOPPED);
 }
@@ -109,12 +121,15 @@ void motordir(int m, int d) {
   digitalWrite(motor[m].forwardpin, d == 1);
   digitalWrite(motor[m].reversepin, d == -1);
 }
-void motordir_timed(int m, int d, int ms) {
-  unsigned long endt = millis() + ms;
+void motordir_timed(int m, int d, unsigned long ms) {
+  motordir_timed_us(m, d, ms*1000);
+}
+void motordir_timed_us(int m, int d, unsigned long us) {
+  unsigned long endt = micros() + us;
   motor[m].dir = d;
   digitalWrite(motor[m].forwardpin, d == 1);
   digitalWrite(motor[m].reversepin, d == -1);
-  while (millis() < endt) {}
+  while (micros() < endt) {}
   digitalWrite(motor[m].forwardpin, 0);
   digitalWrite(motor[m].reversepin, 0);
   motor[m].dir = STOPPED;
@@ -197,14 +212,17 @@ void loop() {
     } else if (motor[i].pos < motor[i].target-EPSILON && motor[i].dir != FORWARDS) {
       forwards(i);
     }
-    /* TODO: jog it for a few microseconds based on the average time between ticks in order to take up the
-     * last EPSILON number of ticks to get bang on the target? I tried to do this but found that the
-     * jerking back and forth has a high risk of overwhelming the power supply, causing the arduino
-     * to reset. It probably wants either more capacitors, or we could use PWM instead of "manually"
-     * switching the motor on and off - only 3 of the motor drive pins support PWM but that might be OK! E.g.
-     * if motor 1 only supports PWM in the reverse direction, we can just overshoot the target when driving
-     * forwards, and then PWM backwards to reach the target
+
+    /* jog it for a few microseconds based on the configured time between steps in order to take up the
+     * last EPSILON number of ticks to get closer to the target
      */
+     if (motor[i].dir == STOPPED && abs(motor[i].pos - motor[i].target) > MIN_EPSILON) {
+       wait_for_stop(i);
+       if (abs(motor[i].pos - motor[i].target) > MIN_EPSILON && abs(motor[i].pos - motor[i].target) < EPSILON) {
+         motordir_timed_us(i, motor[i].pos > motor[i].target ? BACKWARDS : FORWARDS, motor[i].us_per_step * abs(motor[i].pos - motor[i].target));
+         wait_for_stop(i);
+       }
+     }
   }
 }
 
@@ -229,14 +247,14 @@ void serial_command(char *buf) {
 
   if (strcmp(params[0], "help") == 0) {
     Serial.print(
-      "commands:\n"
-      "   help       - show help\n"
-      "   drive N D  - drive motor N (0,1) in direction D (-1,0,1) (disables target)\n"
-      "   target N P - make motor N (0,1) move to position P (-2bn .. +2bn)\n"
-      "   read N     - read state of motor N\n"
-      "   servo N    - set motor microseconds to N (servomin .. servomax)\n"
-      "   readservo  - read servo microseconds and bounds\n"
-      "   test N     - re-test motor N (0,1)\n");
+      "commands:\r\n"
+      "   help           - show help\r\n"
+      "   drive N D [M]  - drive motor N (0,1) in direction D (-1,0,1) [for M millisecs] (disables target)\r\n"
+      "   target N P     - make motor N (0,1) move to position P (-2bn .. +2bn)\r\n"
+      "   read N         - read state of motor N\r\n"
+      "   servo N        - set motor microseconds to N (servomin .. servomax)\r\n"
+      "   readservo      - read servo microseconds and bounds\r\n"
+      "   test N         - re-test motor N (0,1)\r\n");
       
   } else if (strcmp(params[0], "drive") == 0) {
     if (!params[1] || !params[2]) {
@@ -255,7 +273,16 @@ void serial_command(char *buf) {
       return;
     }
 
-    motordir(num, dir);
+    if (params[3]) {
+      int ms = atoi(params[3]);
+      if (ms < 0) {
+        Serial.println("error: can't drive motor for negative millisecs");
+        return;
+      }
+      motordir_timed(num, dir, atoi(params[3]));
+    } else {
+      motordir(num, dir);
+    }
     motor[num].havetarget = false;
     
   } else if (strcmp(params[0], "target") == 0) {
@@ -293,7 +320,7 @@ void serial_command(char *buf) {
     Serial.print(" target="); Serial.print(motor[num].target);
     Serial.print(" havetarget="); Serial.print(motor[num].havetarget);
     Serial.print(" ok="); Serial.print(motor[num].ok);
-    Serial.print("\n");
+    Serial.print("\r\n");
     
   } else if (strcmp(params[0], "servo") == 0) {
     if (!params[1]) {
@@ -314,7 +341,7 @@ void serial_command(char *buf) {
     Serial.print("servo: us="); Serial.print(servous);
     Serial.print(" min="); Serial.print(servomin);
     Serial.print(" max="); Serial.print(servomax);
-    Serial.print("\n");
+    Serial.print("\r\n");
     
   } else if (strcmp(params[0], "test") == 0) {
     if (!params[1]) {
