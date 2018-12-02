@@ -1,0 +1,14 @@
+#!/bin/sh
+# pass command-line arguments directly to pikontrolld
+#
+# use "pikontroll-cli help" to get help text from server:
+#
+# commands:
+# trim M    - report trim for motor N (0,1)
+# trim M N  - set trim for motor M (0,1) to N steps
+# focus     - report focus setting
+# focus N   - set focus setting to N
+# coords    - report current target coordinates
+# help      - show this help
+
+echo "$@" | nc -N localhost 10002
