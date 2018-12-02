@@ -190,7 +190,7 @@ class Telescope_Channel(asyncore.dispatcher):
         self.drive_to_target()
         self.send_current_pos()
         self.last_update = time()
- 
+
 ## \brief Implementation of the server side communications for 'Stellarium Telescope Protocol'.
 #
 #  Each connection request generate an independent execution thread as instance of Telescope_Channel
@@ -201,14 +201,20 @@ class Telescope_Server(asyncore.dispatcher):
     # \param port Port to listen on
     def __init__(self, port=10001):
         asyncore.dispatcher.__init__(self, None)
-        self.tel = None
         self.port = port
         try:
             self.ser = serial.Serial("/dev/ttyUSB0", 9600, timeout=10)
         except:
             self.ser = serial.Serial("/dev/ttyUSB1", 9600, timeout=10)
+        # consume any output from the uno
+        while True:
+            l = self.ser.readline()
+            if l == "Ready.\r\n" or l == "":
+                break
         self.azMotor = PikonMotor(self.ser, 0, 294912)
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
+        self.target = (0, 0)
+        self.pikon = Pikontroll_Server(self)
  
     ## Starts thread
     #
@@ -219,7 +225,7 @@ class Telescope_Server(asyncore.dispatcher):
         self.set_reuse_addr()
         self.bind(('0.0.0.0', self.port))
         self.listen(1)
-        self.connected = False
+        self.pikon.begin()
         while True:
             asyncore.loop(0.1)
 
@@ -227,6 +233,30 @@ class Telescope_Server(asyncore.dispatcher):
         logging.debug("Target %f, %f" % (altdegrees, azdegrees))
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
+        self.target = (altdegrees, azdegrees)
+
+    def set_trim(self, motor, steps):
+        if motor == 0:
+            self.azMotor.trim = steps
+            self.azMotor.target(self.target[1])
+        else:
+            self.altMotor.trim = steps
+            self.azMotor.target(self.target[0])
+
+    # azMotor is motor 0, altMotor is motor 1
+    def get_trim(self):
+        return (self.azMotor.trim, self.altMotor.trim)
+
+    def set_focus(self, focus):
+        self.ser.write("servo %d\n" % (focus))
+
+    def get_focus(self):
+        self.ser.write("readservo\n")
+        resp = self.ser.readline()
+        logging.debug("resp = " + resp)
+        regex = re.compile("servo: us=(-?\d+) min=(-?\d+) max=(-?\d+)")
+        m = regex.match(resp)
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
  
     # return (altdegrees, azdegrees)
     def currentpos(self):
@@ -236,16 +266,115 @@ class Telescope_Server(asyncore.dispatcher):
     #
     # Stats a new thread as Telescope_Channel instance, passing it the opened socket as parameter
     def handle_accept(self):
-        self.conn, self.addr = self.accept()
-        logging.debug('%s Connected', self.addr)
-        self.connected = True
-        self.tel = Telescope_Channel(self.conn, self)
- 
-    ## Closes the connection
-    #
-    def close_socket(self):
-        if self.connected:
-            self.conn.close()
+        conn, addr = self.accept()
+        logging.debug('%s Connected', addr)
+        Telescope_Channel(conn, self)
+
+class Pikontroll_Channel(asyncore.dispatcher):
+    def __init__(self, conn, server):
+        self.server = server
+        self.buf = ''
+        asyncore.dispatcher.__init__(self, conn)
+
+    def readable(self):
+        return True
+
+    def writable(self):
+        return False
+
+    def handle_read(self):
+        data = self.recv(1024)
+        if not data:
+            return
+
+        self.buf += data
+        lines = self.buf.split("\n")
+        # leave the last partial line in self.buf, and process the complete lines
+        self.buf = lines[-1]
+        lines = lines[:-1]
+
+        for l in lines:
+            self.process(l)
+
+    def handle_write(self):
+        return None
+
+    def handle_close(self):
+        logging.debug("Pikontroll channel disconnected")
+        self.close()
+
+    def process(self, line):
+        params = line.split(" ")
+
+        if params[0] == "trim":
+            self.cmd_trim(params)
+        elif params[0] == "focus":
+            self.cmd_focus(params)
+        elif params[0] == "coords":
+            self.cmd_coords(params)
+        elif params[0] == "help":
+            self.cmd_help(params)
+        else:
+            self.send("error: don't recognise '" + params[0] + "'\n")
+
+    def cmd_trim(self, params):
+        if len(params) < 2 or len(params) > 3:
+            self.send("error: usage: trim M [N]\n")
+            return
+
+        motor = int(params[1])
+        if motor < 0 or motor > 1:
+            self.send("error: motor should be either 0 or 1\n")
+            return
+
+        if len(params) == 3:
+            trim = int(params[2])
+            self.server.telescope_server.set_trim(motor, trim)
+
+        steps = self.server.telescope_server.get_trim()[motor]
+        self.send("ok: trim %d %d\n" % (motor, steps))
+
+    def cmd_focus(self, params):
+        if len(params) < 1 or len(params) > 2:
+            self.send("error: usage: focus [N]\n")
+            return
+
+        if len(params) == 2:
+            focus = int(params[1])
+            self.server.telescope_server.set_focus(focus)
+
+        (focus,focusmin,focusmax) = self.server.telescope_server.get_focus()
+        self.send("ok: focus %d in %d to %d\n" % (focus, focusmin, focusmax))
+
+    def cmd_coords(self, params):
+        (altdegrees, azdegrees) = self.server.telescope_server.currentpos()
+        self.send("ok: coords %f %f\n" % (altdegrees, azdegrees))
+
+    def cmd_help(self, params):
+        self.send("commands:\n"
+            "trim M    - report trim for motor N (0,1)\n"
+            "trim M N  - set trim for motor M (0,1) to N steps\n"
+            "focus     - report focus setting\n"
+            "focus N   - set focus setting to N\n"
+            "coords    - report current target coordinates\n"
+            "help      - show this help\n")
+
+class Pikontroll_Server(asyncore.dispatcher):
+    def __init__(self, telescope_server, port=10002):
+        asyncore.dispatcher.__init__(self, None)
+        self.telescope_server = telescope_server
+        self.port = port
+
+    def begin(self):
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.set_reuse_addr()
+        self.bind(('0.0.0.0', self.port))
+        self.listen(1)
+
+    def handle_accept(self):
+        conn, addr = self.accept()
+        logging.debug('%s Connected to pikontroll port', addr)
+        Pikontroll_Channel(conn, self)
  
 #Run a Telescope Server
 if __name__ == '__main__':
