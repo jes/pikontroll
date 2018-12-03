@@ -213,7 +213,7 @@ class Telescope_Server(asyncore.dispatcher):
                 break
         self.azMotor = PikonMotor(self.ser, 0, 294912)
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
-        self.target = (0, 0)
+        self.targetcoords = (0, 0)
         self.pikon = Pikontroll_Server(self)
  
     ## Starts thread
@@ -233,15 +233,15 @@ class Telescope_Server(asyncore.dispatcher):
         logging.debug("Target %f, %f" % (altdegrees, azdegrees))
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
-        self.target = (altdegrees, azdegrees)
+        self.targetcoords = (altdegrees, azdegrees)
 
     def set_trim(self, motor, steps):
         if motor == 0:
             self.azMotor.trim = steps
-            self.azMotor.target(self.target[1])
+            self.azMotor.target(self.targetcoords[1])
         else:
             self.altMotor.trim = steps
-            self.azMotor.target(self.target[0])
+            self.azMotor.target(self.targetcoords[0])
 
     # azMotor is motor 0, altMotor is motor 1
     def get_trim(self):
