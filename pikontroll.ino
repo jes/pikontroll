@@ -115,7 +115,7 @@ void backwards(int m) {
 void motordir(int m, int d) {
   if (d != 0 && motor[m].dir == -d) {
     // stop the motor for 100ms before reversing direction, to avoid voltage spikes in power supply
-    motordir_timed(m, 0, 100);
+    motordir_timed(m, STOPPED, 100);
   }
   motor[m].dir = d;
   digitalWrite(motor[m].forwardpin, d == 1);
