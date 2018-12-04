@@ -245,7 +245,7 @@ class Telescope_Server(asyncore.dispatcher):
             self.azMotor.target(self.targetcoords[1])
         else:
             self.altMotor.trim = steps
-            self.azMotor.target(self.targetcoords[0])
+            self.altMotor.target(self.targetcoords[0])
 
     # azMotor is motor 0, altMotor is motor 1
     def get_trim(self):
