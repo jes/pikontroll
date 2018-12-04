@@ -215,6 +215,7 @@ class Telescope_Server(asyncore.dispatcher):
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
         self.targetcoords = (0, 0)
         self.pikon = Pikontroll_Server(self)
+        self.tracking = True
  
     ## Starts thread
     #
@@ -230,6 +231,9 @@ class Telescope_Server(asyncore.dispatcher):
             asyncore.loop(0.1)
 
     def target(self, altdegrees, azdegrees):
+        if not self.tracking:
+            logging.debug("Target %f, %f but tracking is paused" % (altdegrees, azdegrees))
+            return
         logging.debug("Target %f, %f" % (altdegrees, azdegrees))
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
@@ -261,6 +265,12 @@ class Telescope_Server(asyncore.dispatcher):
     # return (altdegrees, azdegrees)
     def currentpos(self):
         return (self.altMotor.currentpos(), self.azMotor.currentpos())
+
+    def pause_tracking(self):
+        self.tracking = False
+
+    def resume_tracking(self):
+        self.tracking = True
 
     ## Handles incomming connection
     #
@@ -312,6 +322,10 @@ class Pikontroll_Channel(asyncore.dispatcher):
             self.cmd_focus(params)
         elif params[0] == "coords":
             self.cmd_coords(params)
+        elif params[0] == "pause":
+            self.cmd_pause(params)
+        elif params[0] == "resume":
+            self.cmd_resume(params)
         elif params[0] == "help":
             self.cmd_help(params)
         else:
@@ -350,6 +364,14 @@ class Pikontroll_Channel(asyncore.dispatcher):
         (altdegrees, azdegrees) = self.server.telescope_server.currentpos()
         self.send("ok: coords %f %f\n" % (altdegrees, azdegrees))
 
+    def cmd_pause(self, params):
+        self.server.telescope_server.pause_tracking()
+        self.send("ok: paused\n")
+
+    def cmd_resume(self, params):
+        self.server.telescope_server.resume_tracking()
+        self.send("ok: resumed\n")
+
     def cmd_help(self, params):
         self.send("commands:\n"
             "trim M    - report trim for motor N (0,1)\n"
@@ -357,6 +379,8 @@ class Pikontroll_Channel(asyncore.dispatcher):
             "focus     - report focus setting\n"
             "focus N   - set focus setting to N\n"
             "coords    - report current target coordinates\n"
+            "pause     - pause tracking\n"
+            "resume    - resume tracking\n"
             "help      - show this help\n")
 
 class Pikontroll_Server(asyncore.dispatcher):
