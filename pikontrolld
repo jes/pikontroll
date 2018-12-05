@@ -23,10 +23,11 @@ class PikonMotor:
         self.n = n
         self.stepsper360 = stepsper360
         self.trim = 0
+        self.offsetdegrees = 0
 
     def target(self, degrees):
         logging.debug("Motor target %f\n" % (degrees))
-        steps = float(degrees) / 360.0 * float(self.stepsper360) + self.trim
+        steps = (float(degrees) - self.offsetdegrees) / 360.0 * float(self.stepsper360) + self.trim
         (cursteps,_,_,_,_,_) = self.read()
         halfturn = self.stepsper360/2
         while steps > cursteps+halfturn:
@@ -35,6 +36,11 @@ class PikonMotor:
             steps += self.stepsper360
         logging.debug(">>> target %d %d\n" % (self.n, steps))
         self.ser.write("target %d %d\n" % (self.n, steps))
+
+    # given current position in degrees, update offset so that we know that's where we're facing
+    def setCurrent(self, degrees):
+        # we know that current angle is "degrees",
+        self.offsetdegrees += degrees - self.currentpos()
 
     # return (pos, dir, last, target, havetarget, ok)
     # where:
@@ -50,13 +56,17 @@ class PikonMotor:
         resp = self.ser.readline()
         regex = re.compile("motor \d+: pos=(-?\d+) dir=(-?\d+) last=(-?\d+) target=(-?\d+) havetarget=([01]) ok=([01])")
         m = regex.match(resp)
+        self.lastread = int(m.group(2))
         return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
+
+    def stop(self):
+        self.ser.write("drive %d 0\n" % (self.n))
 
     # return current position in degrees
     # (blocks on serial)
     def currentpos(self):
         (pos,_,_,_,_,_) = self.read()
-        degrees = float(pos - self.trim) * 360.0 / float(self.stepsper360)
+        degrees = float(pos - self.trim) * 360.0 / float(self.stepsper360) + self.offsetdegrees
         while degrees < 0:
             degrees += 360
         while degrees > 360:
@@ -132,14 +142,16 @@ class Telescope_Channel(asyncore.dispatcher):
 
             self.target = (coords.rad_2_hour(coords.hourStr_2_rad(sra)), dec_degrees)
             self.have_target = True
-            self.drive_to_target()
+            self.drive_to_target(new=True)
 
-    def drive_to_target(self):
+    def drive_to_target(self, new=False):
         if not self.have_target:
             return
         (ra, dec) = self.target
         (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), -2.50029, 51.45528, ra, dec)
         logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
+        if new:
+            self.server.new_target(altdegrees, azdegrees)
         self.server.target(altdegrees, azdegrees)
 
     ## Updates the field of view indicator in Stellarium
@@ -216,6 +228,7 @@ class Telescope_Server(asyncore.dispatcher):
         self.targetcoords = (0, 0)
         self.pikon = Pikontroll_Server(self)
         self.tracking = True
+        self.receiving = False
  
     ## Starts thread
     #
@@ -229,6 +242,12 @@ class Telescope_Server(asyncore.dispatcher):
         self.pikon.begin()
         while True:
             asyncore.loop(0.1)
+
+    def new_target(self, altdegrees, azdegrees):
+        if self.receiving:
+            self.receiving = False
+            self.altMotor.setCurrent(altdegrees)
+            self.azMotor.setCurrent(azdegrees)
 
     def target(self, altdegrees, azdegrees):
         if not self.tracking:
@@ -268,9 +287,14 @@ class Telescope_Server(asyncore.dispatcher):
 
     def pause_tracking(self):
         self.tracking = False
+        self.altMotor.stop()
+        self.azMotor.stop()
 
     def resume_tracking(self):
         self.tracking = True
+
+    def receive_coords(self):
+        self.receiving = True
 
     ## Handles incomming connection
     #
@@ -326,6 +350,8 @@ class Pikontroll_Channel(asyncore.dispatcher):
             self.cmd_pause(params)
         elif params[0] == "resume":
             self.cmd_resume(params)
+        elif params[0] == "receive":
+            self.cmd_receive(params)
         elif params[0] == "help":
             self.cmd_help(params)
         else:
@@ -372,6 +398,10 @@ class Pikontroll_Channel(asyncore.dispatcher):
         self.server.telescope_server.resume_tracking()
         self.send("ok: resumed\n")
 
+    def cmd_receive(self, params):
+        self.server.telescope_server.receive_coords()
+        self.send("ok: receiving\n")
+
     def cmd_help(self, params):
         self.send("commands:\n"
             "trim M    - report trim for motor N (0,1)\n"
@@ -381,6 +411,7 @@ class Pikontroll_Channel(asyncore.dispatcher):
             "coords    - report current target coordinates\n"
             "pause     - pause tracking\n"
             "resume    - resume tracking\n"
+            "receive   - next stellarium coordinates describe current heading rather than setting target\n"
             "help      - show this help\n")
 
 class Pikontroll_Server(asyncore.dispatcher):
