@@ -20,7 +20,8 @@
 
 #define BUFSZ 128
 
-// continuous drive to within EPSILON steps of the target, and then use the "us_per_step" table to look up how long to run the motors for
+// continuous drive to within EPSILON steps of the target, and then use the
+// "us_per_step" value to look up how long to run the motors for
 #define EPSILON 40
 // don't bother trying to get closer than MIN_EPSILON steps
 #define MIN_EPSILON 4
@@ -365,7 +366,7 @@ char **split(char *buf) {
   int n = 0;
   
   char *p = buf;
-  while (*p) {
+  while (*p && n < 15) {
     parts[n++] = p;
     while (*p && *p != ' ')
       p++;
