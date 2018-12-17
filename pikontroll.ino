@@ -366,7 +366,7 @@ char **split(char *buf) {
   int n = 0;
   
   char *p = buf;
-  while (*p && n < 15) {
+  while (*p && n < 14) {
     parts[n++] = p;
     while (*p && *p != ' ')
       p++;
