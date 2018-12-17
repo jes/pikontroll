@@ -370,10 +370,8 @@ char **split(char *buf) {
     parts[n++] = p;
     while (*p && *p != ' ')
       p++;
-    if (*p == ' ') {
-      *p = 0;
-      p++;
-    }
+    if (*p == ' ')
+      *(p++) = 0;
   }
   parts[n++] = 0;
   
