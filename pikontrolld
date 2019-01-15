@@ -16,6 +16,9 @@ import re
  
 logging.basicConfig(level=logging.DEBUG, format="%(filename)s: %(funcName)s - %(levelname)s: %(message)s")
 
+OBS_LON = 51.45528
+OBS_LAT = -2.50029
+
 class PikonMotor:
     # ser is the serial port to write to, n is the motor index
     def __init__(self, ser, n, stepsper360):
@@ -138,44 +141,21 @@ class Telescope_Channel(asyncore.dispatcher):
             logging.debug("Size: %d, Type: %d, Time: %d, RA: %d (%s), DEC: %d (%s)" % (msize, mtype, mtime, ra_uint, ra, dec_int, dec))
             (sra, sdec, stime) = coords.eCoords2str(float("%f" % ra_uint), float("%f" % dec_int), float("%f" %  mtime))
 
+            ra_hours = coords.rad_2_hour(coords.hourStr_2_rad(sra))
             dec_degrees = dec_int * float(90.0)/float(1073741824)
 
-            self.target = (coords.rad_2_hour(coords.hourStr_2_rad(sra)), dec_degrees)
-            self.have_target = True
-            self.drive_to_target(new=True)
-
-    def drive_to_target(self, new=False):
-        if not self.have_target:
-            return
-        (ra, dec) = self.target
-        (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), -2.50029, 51.45528, ra, dec)
-        logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
-        if new:
-            self.server.new_target(altdegrees, azdegrees)
-        self.server.target(altdegrees, azdegrees)
-
-    ## Updates the field of view indicator in Stellarium
-    #
-    # \param ra Right ascension in signed string format
-    # \param dec Declination in signed string format
-    def act_pos(self, ra, dec):
-        (ra_p, dec_p) = coords.rad_2_stellarium_protocol(ra, dec)
- 
-        times = 10 #Number of times that Stellarium expects to receive new coords //Absolutly empiric..
-        for i in range(times):
-            self.move(ra_p, dec_p)
+            self.server.set_radec(ra_hours, dec_degrees)
 
     # read current position from motors and send it to stellarium
     def send_current_pos(self):
-        (altdegrees, azdegrees) = self.server.currentpos()
-        (ra_hours, dec_degrees) = altazimuth.ComputeRaDec(altazimuth.GetNow(), -2.50029, 51.45528, azdegrees, altdegrees)
+        (ra_hours, dec_degrees) = self.server.get_radec()
         logging.debug("Ra_hours = %f, Dec_degrees = %f" % (ra_hours, dec_degrees))
         ra_rad = round((ra_hours * 15 * math.pi) / 180, 6)
         dec_rad = dec_degrees * math.pi / 180
         (ra, dec) = coords.rad_2_stellarium_protocol(ra_rad, dec_rad)
+        # XXX: why 10 times?
         for i in range(10):
             self.move(ra, dec)
-        logging.debug("Alt = %f, Az = %f\n" % (altdegrees, azdegrees))
  
     ## Sends to Stellarium equatorial coordinates
     #
@@ -199,7 +179,7 @@ class Telescope_Channel(asyncore.dispatcher):
     #
     def handle_write(self):
         logging.debug("Handle write")
-        self.drive_to_target()
+        self.server.drive_to_target()
         self.send_current_pos()
         self.last_update = time()
 
@@ -225,10 +205,12 @@ class Telescope_Server(asyncore.dispatcher):
                 break
         self.azMotor = PikonMotor(self.ser, 0, 294912)
         self.altMotor = PikonMotor(self.ser, 1, 314572.8)
-        self.targetcoords = (0, 0)
+        self.target_altaz = (0, 0)
         self.pikon = Pikontroll_Server(self)
         self.tracking = True
         self.receiving = False
+        self.target_radec = (0, 0)
+        self.have_target = False
  
     ## Starts thread
     #
@@ -256,15 +238,37 @@ class Telescope_Server(asyncore.dispatcher):
         logging.debug("Target %f, %f" % (altdegrees, azdegrees))
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
-        self.targetcoords = (altdegrees, azdegrees)
+        self.target_altaz = (altdegrees, azdegrees)
+
+    def drive_to_target(self, new=False):
+        if not self.have_target:
+            return
+        (ra, dec) = self.target_radec
+        (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), OBS_LAT, OBS_LON, ra, dec)
+        logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
+        if new:
+            self.new_target(altdegrees, azdegrees)
+        self.target(altdegrees, azdegrees)
+
+    # return *current* position in ra/dec
+    def get_radec(self):
+        (altdegrees, azdegrees) = self.currentpos()
+        (ra_hours, dec_degrees) = altazimuth.ComputeRaDec(altazimuth.GetNow(), OBS_LAT, OBS_LON, azdegrees, altdegrees)
+        return (ra_hours, dec_degrees)
+
+    # set *target* position in ra/dec
+    def set_radec(self, ra_hours, dec_degrees):
+        self.target_radec = (ra_hours, dec_degrees)
+        self.have_target = True
+        self.drive_to_target(new=True)
 
     def set_trim(self, motor, steps):
         if motor == 0:
             self.azMotor.trim = steps
-            self.azMotor.target(self.targetcoords[1])
+            self.azMotor.target(self.target_altaz[1])
         else:
             self.altMotor.trim = steps
-            self.altMotor.target(self.targetcoords[0])
+            self.altMotor.target(self.target_altaz[0])
 
     # azMotor is motor 0, altMotor is motor 1
     def get_trim(self):
@@ -346,6 +350,8 @@ class Pikontroll_Channel(asyncore.dispatcher):
             self.cmd_focus(params)
         elif params[0] == "coords":
             self.cmd_coords(params)
+        elif params[0] == "radec":
+            self.cmd_radec(params)
         elif params[0] == "pause":
             self.cmd_pause(params)
         elif params[0] == "resume":
@@ -390,6 +396,19 @@ class Pikontroll_Channel(asyncore.dispatcher):
         (altdegrees, azdegrees) = self.server.telescope_server.currentpos()
         self.send("ok: coords %f %f\n" % (altdegrees, azdegrees))
 
+    def cmd_radec(self, params):
+        if len(params) < 1 or len(params) > 3:
+            self.send("error: usage: radec [R D]\n")
+            return
+
+        if len(params) == 3:
+            ra = float(params[1]) # decimal hours
+            dec = float(params[2]) # decimal degrees
+            self.server.telescope_server.set_radec(ra, dec)
+
+        (ra, dec) = self.server.telescope_server.get_radec()
+        self.send("ok: radec %f %f\n" % (ra, dec))
+
     def cmd_pause(self, params):
         self.server.telescope_server.pause_tracking()
         self.send("ok: paused\n")
@@ -408,7 +427,9 @@ class Pikontroll_Channel(asyncore.dispatcher):
             "trim M N  - set trim for motor M (0,1) to N steps\n"
             "focus     - report focus setting\n"
             "focus N   - set focus setting to N\n"
-            "coords    - report current target coordinates\n"
+            "coords    - report current target alt/az coordinates\n"
+            "radec     - report current target ra/dec coordinates\n"
+            "radec R D - set target ra/dec coordinates\n"
             "pause     - pause tracking\n"
             "resume    - resume tracking\n"
             "receive   - next stellarium coordinates describe current heading rather than setting target\n"
