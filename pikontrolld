@@ -27,6 +27,8 @@ class PikonMotor:
         self.stepsper360 = stepsper360
         self.trim = 0
         self.offsetdegrees = 0
+        self.lastread = 0
+        self.lastread_time = 0
 
     def target(self, degrees):
         logging.debug("Motor target %f\n" % (degrees))
@@ -59,16 +61,19 @@ class PikonMotor:
         resp = self.ser.readline()
         regex = re.compile("motor \d+: pos=(-?\d+) dir=(-?\d+) last=(-?\d+) target=(-?\d+) havetarget=([01]) ok=([01])")
         m = regex.match(resp)
-        self.lastread = int(m.group(2))
+        self.lastread = int(m.group(1))
+        self.lastread_time = time()
         return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
 
     def stop(self):
         self.ser.write("drive %d 0\n" % (self.n))
 
     # return current position in degrees
-    # (blocks on serial)
+    # (blocks on serial if we don't have a current position from last 100ms)
     def currentpos(self):
-        (pos,_,_,_,_,_) = self.read()
+        pos = self.lastread
+        if time() > self.lastread_time + 100:
+            (pos,_,_,_,_,_) = self.read()
         degrees = float(pos - self.trim) * 360.0 / float(self.stepsper360) + self.offsetdegrees
         while degrees < 0:
             degrees += 360
