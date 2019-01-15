@@ -31,7 +31,6 @@ class PikonMotor:
         self.lastread_time = 0
 
     def target(self, degrees):
-        logging.debug("Motor target %f\n" % (degrees))
         steps = (float(degrees) - self.offsetdegrees) / 360.0 * float(self.stepsper360) + self.trim
         (cursteps,_,_,_,_,_) = self.read()
         halfturn = self.stepsper360/2
@@ -39,7 +38,6 @@ class PikonMotor:
             steps -= self.stepsper360
         while steps < cursteps-halfturn:
             steps += self.stepsper360
-        logging.debug(">>> target %d %d\n" % (self.n, steps))
         self.ser.write("target %d %d\n" % (self.n, steps))
 
     # given current position in degrees, update offset so that we know that's where we're facing
@@ -79,7 +77,6 @@ class PikonMotor:
             degrees += 360
         while degrees > 360:
             degrees -= 360
-        logging.debug("Current degrees on motor %d is %f" % (self.n, degrees))
         return degrees
  
 ## \brief Implementation of the server side connection for 'Stellarium Telescope Protocol'
@@ -112,7 +109,7 @@ class Telescope_Channel(asyncore.dispatcher):
     ## Close connection handler
     #
     def handle_close(self):
-        logging.debug("Disconnected")
+        logging.debug("Stellarium disconnected")
         self.close()
  
     ## Reading socket handler
@@ -143,7 +140,6 @@ class Telescope_Channel(asyncore.dispatcher):
             dec_int = data.read('intle:32')
 
  
-            logging.debug("Size: %d, Type: %d, Time: %d, RA: %d (%s), DEC: %d (%s)" % (msize, mtype, mtime, ra_uint, ra, dec_int, dec))
             (sra, sdec, stime) = coords.eCoords2str(float("%f" % ra_uint), float("%f" % dec_int), float("%f" %  mtime))
 
             ra_hours = coords.rad_2_hour(coords.hourStr_2_rad(sra))
@@ -154,7 +150,6 @@ class Telescope_Channel(asyncore.dispatcher):
     # read current position from motors and send it to stellarium
     def send_current_pos(self):
         (ra_hours, dec_degrees) = self.server.get_radec()
-        logging.debug("Ra_hours = %f, Dec_degrees = %f" % (ra_hours, dec_degrees))
         ra_rad = round((ra_hours * 15 * math.pi) / 180, 6)
         dec_rad = dec_degrees * math.pi / 180
         (ra, dec) = coords.rad_2_stellarium_protocol(ra_rad, dec_rad)
@@ -183,7 +178,6 @@ class Telescope_Channel(asyncore.dispatcher):
     ## Transmission handler
     #
     def handle_write(self):
-        logging.debug("Handle write")
         self.server.drive_to_target()
         self.send_current_pos()
         self.last_update = time()
@@ -240,7 +234,6 @@ class Telescope_Server(asyncore.dispatcher):
         if not self.tracking:
             logging.debug("Target %f, %f but tracking is paused" % (altdegrees, azdegrees))
             return
-        logging.debug("Target %f, %f" % (altdegrees, azdegrees))
         self.altMotor.target(altdegrees)
         self.azMotor.target(azdegrees)
         self.target_altaz = (altdegrees, azdegrees)
@@ -250,7 +243,6 @@ class Telescope_Server(asyncore.dispatcher):
             return
         (ra, dec) = self.target_radec
         (azdegrees, altdegrees) = altazimuth.ComputeAltAzimuth(altazimuth.GetNow(), OBS_LAT, OBS_LON, ra, dec)
-        logging.debug("TARGET ANGLES: ALTITUDE = %f, AZIMUTH = %f" % (altdegrees, azdegrees))
         if new:
             self.new_target(altdegrees, azdegrees)
         self.target(altdegrees, azdegrees)
@@ -285,7 +277,6 @@ class Telescope_Server(asyncore.dispatcher):
     def get_focus(self):
         self.ser.write("readservo\n")
         resp = self.ser.readline()
-        logging.debug("resp = " + resp)
         regex = re.compile("servo: us=(-?\d+) min=(-?\d+) max=(-?\d+)")
         m = regex.match(resp)
         return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -343,7 +334,6 @@ class Pikontroll_Channel(asyncore.dispatcher):
         return None
 
     def handle_close(self):
-        logging.debug("Pikontroll channel disconnected")
         self.close()
 
     def process(self, line):
@@ -454,7 +444,6 @@ class Pikontroll_Server(asyncore.dispatcher):
 
     def handle_accept(self):
         conn, addr = self.accept()
-        logging.debug('%s Connected to pikontroll port', addr)
         Pikontroll_Channel(conn, self)
  
 #Run a Telescope Server

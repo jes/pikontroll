@@ -191,6 +191,4 @@ def rad_2_stellarium_protocol(ra, dec):
  
     dec_d = (dec * 180) / math.pi
  
-    logging.debug("(hours, degrees): (%f, %f) -> (%s, %s)" % (ra_h, dec_d, hour_2_hourStr(ra_h), deg_2_degStr(dec_d)))
- 
     return (int(ra_h*(2147483648/12.0)), int(dec_d*(1073741824/90.0)))
