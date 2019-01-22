@@ -38,6 +38,8 @@ class PikonMotor:
             steps -= self.stepsper360
         while steps < cursteps-halfturn:
             steps += self.stepsper360
+        if self.n == 1:
+            steps = -steps
         self.ser.write("target %d %d\n" % (self.n, steps))
 
     # given current position in degrees, update offset so that we know that's where we're facing
@@ -59,9 +61,12 @@ class PikonMotor:
         resp = self.ser.readline()
         regex = re.compile("motor \d+: pos=(-?\d+) dir=(-?\d+) last=(-?\d+) target=(-?\d+) havetarget=([01]) ok=([01])")
         m = regex.match(resp)
-        self.lastread = int(m.group(1))
+        steps = int(m.group(1))
+        if self.n == 1:
+            steps = -steps
+        self.lastread = steps
         self.lastread_time = time()
-        return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
+        return (steps, int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)), int(m.group(6)))
 
     def stop(self):
         self.ser.write("drive %d 0\n" % (self.n))
@@ -139,7 +144,6 @@ class Telescope_Channel(asyncore.dispatcher):
             data.bitpos = ant_pos
             dec_int = data.read('intle:32')
 
- 
             (sra, sdec, stime) = coords.eCoords2str(float("%f" % ra_uint), float("%f" % dec_int), float("%f" %  mtime))
 
             ra_hours = coords.rad_2_hour(coords.hourStr_2_rad(sra))
